@@ -103,7 +103,12 @@ public sealed class DeviceScannerService : BackgroundService
                 return;
             }
 
-            var desired = catalog.Devices.ToDictionary(device => device.Id);
+            // A device an edge reads is not polled here (ADR-0019): the edge reads it, and its
+            // values arrive over that edge's link. Everything else the Gateway acquires itself,
+            // which is what leaves the on-premises topology unchanged.
+            var desired = catalog.Devices
+                .Where(device => catalog.EdgeOfDevice(device.Id) is null)
+                .ToDictionary(device => device.Id);
 
             foreach (var (deviceId, scan) in _running.ToList())
             {
@@ -130,7 +135,12 @@ public sealed class DeviceScannerService : BackgroundService
                     continue;
                 }
 
-                var tags = catalog.TagsOfDevice(device.Id)
+                // Everything this device delivers: its own tags, and — for a device that carries
+                // an edge's link — the tags of every device assigned to an edge that names it
+                // (ADR-0019). A device an edge reads is not polled here, so that link is the only
+                // thing feeding its tags, and a pushing driver refuses a sample naming a tag it
+                // was not handed — the wider list is what lets it deliver them at all.
+                var tags = catalog.TagsCarriedBy(device.Id)
                     .Select(tag => new DriverTag(tag.Id, tag.SourceAddress, tag.ValueKind))
                     .ToList();
 
@@ -177,9 +187,12 @@ public sealed class DeviceScannerService : BackgroundService
             device.ConnectionSettings.OrderBy(pair => pair.Key, StringComparer.Ordinal)
                 .Select(pair => $"{pair.Key}={pair.Value}"));
 
+        // What the device is handed, so that a change to the set — including a device being
+        // assigned to the edge this link carries (ADR-0019) — restarts the loop, and the driver
+        // is handed the new list rather than keeping the one it started with.
         var tags = string.Join(
             ';',
-            catalog.TagsOfDevice(device.Id)
+            catalog.TagsCarriedBy(device.Id)
                 .OrderBy(tag => tag.Id)
                 .Select(tag => $"{tag.Id}:{tag.SourceAddress}:{tag.ValueKind}"));
 

@@ -47,6 +47,16 @@ public interface IDeviceRepository
 
     Task AddAsync(Device device, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Writes a device, including which edge acquires it — the only way the assignment ever
+    /// changes (ADR-0019).
+    /// </summary>
+    /// <exception cref="ConfigurationConflictException">
+    /// The device was assigned to an edge that has no link device, or a device that carries an
+    /// edge's link was assigned to an edge. A device an edge reads is not polled by the Gateway,
+    /// so the link is the only thing feeding its tags; an assignment with no link would leave
+    /// them with no source at all, and nothing would say so.
+    /// </exception>
     Task UpdateAsync(Device device, CancellationToken cancellationToken);
 
     /// <summary>
@@ -57,6 +67,10 @@ public interface IDeviceRepository
     /// preserve — its device owns it (ADR-0001 §3) — so there is nothing an operator
     /// could usefully do with the tags first, and no choice worth forcing them to make.
     /// </remarks>
+    /// <exception cref="ConfigurationConflictException">
+    /// The device carries an edge's link (ADR-0019). Deleting it would leave the tags of every
+    /// device assigned to that edge with no source, so the edge is repointed first, explicitly.
+    /// </exception>
     Task DeleteAsync(Guid deviceId, CancellationToken cancellationToken);
 }
 
@@ -75,6 +89,15 @@ public interface IEdgeRepository
 
     Task AddAsync(Edge edge, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Renames an edge and, when no device is assigned to it, sets which device carries its link.
+    /// </summary>
+    /// <exception cref="ConfigurationConflictException">
+    /// The link was being cleared or repointed while a live device is still assigned to this
+    /// edge. A device an edge reads is not polled by the Gateway, so that link is the only thing
+    /// feeding its tags; moving it would leave them with no source at all. The operator unassigns
+    /// the devices explicitly first.
+    /// </exception>
     Task UpdateAsync(Edge edge, CancellationToken cancellationToken);
 
     /// <summary>

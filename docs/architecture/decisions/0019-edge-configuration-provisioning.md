@@ -17,7 +17,9 @@ and tags comes from. At the time this ADR was written it was a hand-written
 **cloud** Gateway's tag ids — `src/EdgeAgent/EdgeOptions.cs` said so
 explicitly, and called out that how the list reaches an edge was still open.
 That is the question this ADR answers. The file is still written by hand
-today, because none of the decision below is built yet.
+today, because the cloud derives no configuration yet: the only part of the
+decision below that is built is the assignment — which edge reads which device
+— and the Gateway's consequent refusal to poll it (2026-09-27).
 
 That leaves two lists a human must keep in agreement:
 
@@ -139,10 +141,35 @@ hand-typed lists become one.
   therefore refused with a named reason and audited, rather than attempted.
   Routing a write to the edge — over the link, with the result reported back —
   is a decision of its own and needs an ADR before any code.
+- **A tag whose device is assigned to an edge is watched by the link that
+  carries it, and no new setting is invented for that.** *Added while
+  implementing (2026-09-27).* Once the Gateway stops polling such a device,
+  nothing feeds its tags, so they must go Bad by the staleness rule (ADR-0016)
+  rather than freeze at their last value (ADR-0003). But ADR-0016 gives the
+  limit to a **driver**, and the Gateway has no driver for a device an edge
+  reads: it never opens a connection to it. The limit therefore belongs to the
+  transport that does carry the values — the edge's **link**, which in the
+  Gateway is a pushing device whose `stalenessSeconds` is already the declared
+  limit for everything it carries. So an edge names its link device, that
+  device carries the tags of every device assigned to the edge, and its limit
+  covers them. One limit per link rather than per plant device, because one
+  link is what is either silent or not. `PushedSources:ClockSkewTolerance` is
+  not reused for this: it is about a clock, not about silence.
+  That makes the two halves one change. Excluding a device from polling before
+  its link carries its tags would leave those tags with no source at all, and
+  the MQTT driver **refuses** a sample naming a tag the device does not carry,
+  so the link has to know the assignment before it can deliver anything. For
+  the same reason an assignment is refused, by name, unless the edge has a
+  link device; and a link device is not deleted, nor an edge's link cleared or
+  moved, while devices are assigned. There is deliberately no state in which a
+  device is read by an edge while the Gateway neither polls it nor watches a
+  link for it.
 - **Not decided here, and left to implementation:** live reload instead of a
   restart; the exact topic and payload shape; whether an edge may be sent a
-  device it cannot reach; and how a device moving from one edge to another is
-  ordered so that no reading is attributed twice.
+  device it cannot reach; how a device moving from one edge to another is
+  ordered so that no reading is attributed twice; and the link device being
+  derived from the edge rather than named, so that nothing about an edge is
+  typed by hand.
 
 ## Verified in review by
 
@@ -162,5 +189,14 @@ hand-typed lists become one.
   reason and audited, and no connection is opened to a device the Gateway
   cannot reach (ADR-0003: a refusal must not report a failure that did not
   happen).
+- With a device assigned to an edge that names a link device, the Gateway
+  starts **no scan loop** for that device, and the link device is started with
+  the device's tags among those it carries. Removing the assignment filter
+  makes the scan loop start again; removing the link's wider tag list makes the
+  device's samples be refused as tags the link does not have.
+- An assignment is refused, by name, unless the edge has a link device; and a
+  link device is not deleted, nor an edge's link cleared or moved, while
+  devices are assigned to it. There is no state in which a device is read by an
+  edge while the Gateway neither polls it nor watches a link for it.
 - No Core type mentions MQTT, Mosquitto or a topic (ADR-0002, ADR-0016,
   ADR-0017).

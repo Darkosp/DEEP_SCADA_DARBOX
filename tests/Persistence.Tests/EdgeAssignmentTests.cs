@@ -132,6 +132,125 @@ public sealed class EdgeAssignmentTests : IClassFixture<TestDatabase>
         Assert.Equal("Boiler House North", Assert.Single(all, e => e.Id == edge.Id).Name);
     }
 
+    [RequiresDatabaseFact]
+    public async Task An_assignment_is_refused_by_name_while_the_edge_has_no_link_device()
+    {
+        // The Gateway stops polling a device an edge reads (ADR-0019), so the link is the only
+        // thing that would feed its tags. An assignment before there is a link would leave them
+        // with no source at all, and nothing would say so.
+        var world = await SeedAsync();
+        var edges = new EdgeRepository(_database.DataSource);
+        var edge = NewEdge(world, "Boiler House");
+        await edges.AddAsync(edge, CancellationToken.None);
+
+        var devices = new DeviceRepository(_database.DataSource);
+        var device = await FindDeviceAsync(devices, await AddDeviceAsync(world, "Pump 1"));
+        device.EdgeId = edge.Id;
+
+        var refused = await Assert.ThrowsAsync<ConfigurationConflictException>(
+            () => devices.UpdateAsync(device, CancellationToken.None));
+
+        Assert.Contains(edge.Name, refused.Message);
+        Assert.Contains("no link device", refused.Message);
+        Assert.Null((await devices.FindAsync(device.Id, CancellationToken.None))!.EdgeId);
+    }
+
+    [RequiresDatabaseFact]
+    public async Task A_device_that_carries_an_edges_link_cannot_itself_be_assigned_to_an_edge()
+    {
+        // A device that carries a link *is* that link; another edge acquiring it would take the
+        // transport out from under the first edge's tags.
+        var world = await SeedAsync();
+        var edges = new EdgeRepository(_database.DataSource);
+        var linkEdge = NewEdge(world, "Boiler House");
+        var otherEdge = NewEdge(world, "Pump House");
+        await edges.AddAsync(linkEdge, CancellationToken.None);
+        await edges.AddAsync(otherEdge, CancellationToken.None);
+
+        var linkDeviceId = await AddDeviceAsync(world, "Edge link");
+        linkEdge.LinkDeviceId = linkDeviceId;
+        await edges.UpdateAsync(linkEdge, CancellationToken.None);
+
+        var devices = new DeviceRepository(_database.DataSource);
+        var linkDevice = await FindDeviceAsync(devices, linkDeviceId);
+        linkDevice.EdgeId = otherEdge.Id;
+
+        var refused = await Assert.ThrowsAsync<ConfigurationConflictException>(
+            () => devices.UpdateAsync(linkDevice, CancellationToken.None));
+
+        Assert.Contains(linkEdge.Name, refused.Message);
+        Assert.Null((await devices.FindAsync(linkDeviceId, CancellationToken.None))!.EdgeId);
+    }
+
+    [RequiresDatabaseFact]
+    public async Task An_edges_link_is_not_cleared_or_moved_while_a_device_is_assigned_to_it()
+    {
+        var world = await SeedAsync();
+        var edges = new EdgeRepository(_database.DataSource);
+        var edge = NewEdge(world, "Boiler House");
+        await edges.AddAsync(edge, CancellationToken.None);
+
+        var linkDeviceId = await AddDeviceAsync(world, "Edge link");
+        edge.LinkDeviceId = linkDeviceId;
+        await edges.UpdateAsync(edge, CancellationToken.None);
+
+        var otherLinkId = await AddDeviceAsync(world, "Spare link");
+        await AddDeviceAsync(world, "Pump 1", edge.Id);
+
+        edge.LinkDeviceId = null;
+        var cleared = await Assert.ThrowsAsync<ConfigurationConflictException>(
+            () => edges.UpdateAsync(edge, CancellationToken.None));
+        Assert.Contains("still has devices assigned", cleared.Message);
+
+        edge.LinkDeviceId = otherLinkId;
+        var moved = await Assert.ThrowsAsync<ConfigurationConflictException>(
+            () => edges.UpdateAsync(edge, CancellationToken.None));
+        Assert.Contains("still has devices assigned", moved.Message);
+
+        // Renaming with the link left where it is still goes through — the guard is on the link,
+        // not on every edit of an edge that has devices.
+        edge.LinkDeviceId = linkDeviceId;
+        edge.Name = "Boiler House North";
+        await edges.UpdateAsync(edge, CancellationToken.None);
+
+        var stored = Assert.Single(await edges.GetAllAsync(CancellationToken.None), e => e.Id == edge.Id);
+        Assert.Equal("Boiler House North", stored.Name);
+        Assert.Equal(linkDeviceId, stored.LinkDeviceId);
+    }
+
+    [RequiresDatabaseFact]
+    public async Task A_device_that_carries_an_edges_link_is_not_deleted_until_the_edge_is_repointed()
+    {
+        // Deleting it would leave the edge still naming a device that is gone, so the next device
+        // assigned to that edge would pass the assignment guard with nothing reading it.
+        var world = await SeedAsync();
+        var edges = new EdgeRepository(_database.DataSource);
+        var edge = NewEdge(world, "Boiler House");
+        await edges.AddAsync(edge, CancellationToken.None);
+
+        var linkDeviceId = await AddDeviceAsync(world, "Edge link");
+        edge.LinkDeviceId = linkDeviceId;
+        await edges.UpdateAsync(edge, CancellationToken.None);
+
+        var devices = new DeviceRepository(_database.DataSource);
+        var refused = await Assert.ThrowsAsync<ConfigurationConflictException>(
+            () => devices.DeleteAsync(linkDeviceId, CancellationToken.None));
+
+        Assert.Contains(edge.Name, refused.Message);
+        Assert.NotNull(await devices.FindAsync(linkDeviceId, CancellationToken.None));
+
+        // Repointed — allowed, because nothing is assigned — and the same delete now goes through.
+        edge.LinkDeviceId = null;
+        await edges.UpdateAsync(edge, CancellationToken.None);
+
+        await devices.DeleteAsync(linkDeviceId, CancellationToken.None);
+        Assert.Null(await devices.FindAsync(linkDeviceId, CancellationToken.None));
+    }
+
+    private static async Task<Device> FindDeviceAsync(DeviceRepository devices, Guid deviceId) =>
+        await devices.FindAsync(deviceId, CancellationToken.None)
+        ?? throw new InvalidOperationException($"Device {deviceId} was not found.");
+
     private static Edge NewEdge(World world, string name) => new()
     {
         Id = Guid.NewGuid(),

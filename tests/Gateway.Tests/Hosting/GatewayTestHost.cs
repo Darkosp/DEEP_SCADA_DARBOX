@@ -149,20 +149,22 @@ public sealed class GatewayTestHost : IAsyncLifetime
     }
 
     /// <summary>
-    /// Creates a device with one writable numeric tag on <paramref name="siteId"/>, scanned
-    /// every 200 ms by a stand-in driver.
+    /// Creates a device with one writable numeric tag on <paramref name="siteId"/>, scanned every
+    /// <paramref name="scanIntervalMs"/> by a stand-in driver — or, for a pushing driver, with no
+    /// scan interval at all, which is what the API demands of one (ADR-0016).
     /// </summary>
     public async Task<LiveDevice> CreateLiveDeviceAsync(
         string adminToken,
         Guid siteId,
         string name,
-        string driverKey = FakeDriverFactory.Key)
+        string driverKey = FakeDriverFactory.Key,
+        int? scanIntervalMs = 200)
     {
         using var client = CreateClient(adminToken);
 
         using var device = await client.PostAsJsonAsync(
             $"/api/sites/{siteId}/devices",
-            new SaveDeviceRequest($"{name} device", driverKey, new Dictionary<string, string>(), 200, FolderId: null));
+            new SaveDeviceRequest($"{name} device", driverKey, new Dictionary<string, string>(), scanIntervalMs, FolderId: null));
         device.EnsureSuccessStatusCode();
         var deviceId = await device.Content.ReadFromJsonAsync<Guid>();
 

@@ -33,7 +33,7 @@ public sealed class EdgeOwnedDeviceWriteTests : IClassFixture<GatewayTestHost>
         var edgeOwned = await _host.CreateLiveDeviceAsync(admin, Bitola, "Edge-owned write probe");
         var gatewayOwned = await _host.CreateLiveDeviceAsync(admin, Bitola, "Gateway-owned write probe");
 
-        var edge = await AssignToNewEdgeAsync(edgeOwned.DeviceId);
+        var edge = await AssignToNewEdgeAsync(admin, edgeOwned.DeviceId);
 
         using var asOperator = _host.CreateClient(@operator.Token);
 
@@ -60,8 +60,16 @@ public sealed class EdgeOwnedDeviceWriteTests : IClassFixture<GatewayTestHost>
     /// later slice — so the test writes the row directly, through the same repository that slice
     /// will use rather than through SQL of its own.
     /// </summary>
-    private async Task<Edge> AssignToNewEdgeAsync(Guid deviceId)
+    /// <remarks>
+    /// The edge names a link device before anything is assigned to it. The Gateway stops polling a
+    /// device an edge reads, so that link is the only thing that would feed its tags, and the
+    /// repository refuses an assignment without one (ADR-0019).
+    /// </remarks>
+    private async Task<Edge> AssignToNewEdgeAsync(string adminToken, Guid deviceId)
     {
+        var link = await _host.CreateLiveDeviceAsync(
+            adminToken, Bitola, "Edge link probe", FakePushingDriverFactory.Key, scanIntervalMs: null);
+
         var dataSource = _host.Services.GetRequiredService<NpgsqlDataSource>();
         var tenant = await _host.Services.GetRequiredService<IConfigurationStore>()
             .GetTenantAsync(CancellationToken.None);
@@ -71,6 +79,7 @@ public sealed class EdgeOwnedDeviceWriteTests : IClassFixture<GatewayTestHost>
             Id = Guid.NewGuid(),
             TenantId = tenant.Id,
             Name = $"edge-{Guid.NewGuid():N}",
+            LinkDeviceId = link.DeviceId,
         };
 
         await new EdgeRepository(dataSource).AddAsync(edge, CancellationToken.None);

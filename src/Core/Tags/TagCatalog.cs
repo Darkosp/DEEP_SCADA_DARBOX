@@ -26,6 +26,7 @@ public sealed class TagCatalog
     private readonly Dictionary<Guid, Site> _sitesById;
     private readonly Dictionary<Guid, Folder> _foldersById;
     private readonly Dictionary<Guid, Edge> _edgesById;
+    private readonly Dictionary<Guid, List<Tag>> _assignedTagsByLinkDevice;
     private readonly Dictionary<Guid, string> _pathsByTagId;
     private readonly Dictionary<Guid, List<AlarmDefinition>> _alarmsByTagId;
 
@@ -47,6 +48,31 @@ public sealed class TagCatalog
         // Edges are optional so that a caller with no edges to speak of — most tests, and any
         // catalogue built before an edge was configured — need not name the empty list.
         _edgesById = (edges ?? []).ToDictionary(e => e.Id);
+
+        // The tags a link device carries beyond its own (ADR-0019): a device assigned to an edge
+        // is not polled by the Gateway, so the link that edge names is the only thing that feeds
+        // its tags. Built once here because the scan service asks it of every device on every
+        // configuration change, and because it is the same answer for every caller until the
+        // configuration changes. Several edges may name one link device — a single wildcard
+        // subscription can carry them all — so the entries accumulate.
+        _assignedTagsByLinkDevice = [];
+        foreach (var device in devices)
+        {
+            if (device.EdgeId is not { } edgeId
+                || !_edgesById.TryGetValue(edgeId, out var edge)
+                || edge.LinkDeviceId is not { } linkDeviceId)
+            {
+                continue;
+            }
+
+            if (!_assignedTagsByLinkDevice.TryGetValue(linkDeviceId, out var carried))
+            {
+                carried = [];
+                _assignedTagsByLinkDevice[linkDeviceId] = carried;
+            }
+
+            carried.AddRange(tags.Where(tag => tag.DeviceId == device.Id));
+        }
 
         _alarmsByTagId = (alarms ?? [])
             .GroupBy(alarm => alarm.TagId)
@@ -101,6 +127,23 @@ public sealed class TagCatalog
     /// <summary>Tags belonging to one device, in configuration order.</summary>
     public IReadOnlyList<Tag> TagsOfDevice(Guid deviceId) =>
         _tagsById.Values.Where(t => t.DeviceId == deviceId).ToList();
+
+    /// <summary>
+    /// Every tag this device delivers to the tag engine: its own, plus — for a device that
+    /// carries an edge's link — the tags of every device assigned to an edge that names it
+    /// (ADR-0019).
+    /// </summary>
+    /// <remarks>
+    /// The wider list is what lets a link deliver at all: a pushing driver is handed the tags it
+    /// may accept samples for, and a sample naming any other tag is refused rather than silently
+    /// attached to something. It is also what the link's silence watch covers, so the tags of a
+    /// device an edge reads go Bad by the staleness rule (ADR-0016) instead of holding the last
+    /// value the Gateway itself once polled.
+    /// </remarks>
+    public IReadOnlyList<Tag> TagsCarriedBy(Guid deviceId) =>
+        _assignedTagsByLinkDevice.TryGetValue(deviceId, out var assigned)
+            ? TagsOfDevice(deviceId).Concat(assigned).ToList()
+            : TagsOfDevice(deviceId);
 
     /// <summary>
     /// The derived display path for a tag, e.g. <c>Skopje/Pump House/Discharge Pressure</c>,

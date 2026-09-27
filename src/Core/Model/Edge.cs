@@ -23,4 +23,25 @@ public sealed class Edge
 
     /// <summary>Identity and display name in one. Unique within the tenant, ignoring case.</summary>
     public required string Name { get; set; }
+
+    /// <summary>
+    /// The Gateway device that carries this edge's link — the pushing device subscribing to the
+    /// topics the edge publishes under (ADR-0016, ADR-0017) — or null while the edge has no link
+    /// yet.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The link is named here rather than by each device the edge reads, because one link is
+    /// either silent or not, whatever it carries. That is also where the staleness limit lives:
+    /// it is a property of the transport (ADR-0016), and for a device an edge reads the transport
+    /// is this link — the Gateway never opens a connection to the device itself.
+    /// </para>
+    /// <para>
+    /// An edge with no link device may have no devices assigned to it. A device an edge reads is
+    /// not polled by the Gateway, so assigning one before there is a link to carry its tags would
+    /// leave them with no source at all; the repository refuses that, by name, rather than
+    /// leaving the system in a state where nothing reads them and nothing says so.
+    /// </para>
+    /// </remarks>
+    public Guid? LinkDeviceId { get; set; }
 }

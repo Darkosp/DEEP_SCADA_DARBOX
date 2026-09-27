@@ -58,13 +58,14 @@ internal static class ConfigurationRows
         };
     }
 
-    internal sealed record EdgeRow(Guid Id, Guid TenantId, string Name)
+    internal sealed record EdgeRow(Guid Id, Guid TenantId, string Name, Guid? LinkDeviceId)
     {
         internal Edge ToDomain() => new()
         {
             Id = Id,
             TenantId = TenantId,
             Name = Name,
+            LinkDeviceId = LinkDeviceId,
         };
     }
 
