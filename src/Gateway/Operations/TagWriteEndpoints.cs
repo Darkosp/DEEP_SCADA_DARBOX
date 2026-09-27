@@ -46,6 +46,32 @@ internal static class TagWriteEndpoints
                 return Results.BadRequest(new { error = "This tag is not writable." });
             }
 
+            // A device an edge acquires is not reachable from here (ADR-0019 §3). The link is
+            // outbound only, so the write below would open a connection that cannot be made and
+            // then report a device error that never happened — an untrue refusal, the class
+            // ADR-0003 exists to prevent. Refused by name instead, and recorded: an operator
+            // deserves to know which edge holds the device. Routing the write to that edge is a
+            // decision of its own and is not taken here.
+            if (catalog.EdgeOfDevice(device.Id) is { } edge)
+            {
+                await audit.AppendAsync(
+                    new AuditEntry(
+                        caller.UserId,
+                        "tag.write_refused",
+                        "tag",
+                        tag.Id,
+                        Audit.Detail(
+                            ("siteId", device.SiteId),
+                            ("deviceId", device.Id),
+                            ("edgeId", edge.Id))),
+                    CancellationToken.None);
+
+                return Results.Conflict(new
+                {
+                    error = $"This tag is read by edge '{edge.Name}', which the Gateway cannot reach.",
+                });
+            }
+
             if (!TryReadValue(request.Value, tag.ValueKind, out var value))
             {
                 return Results.BadRequest(new { error = $"This tag takes a {tag.ValueKind.ToString().ToLowerInvariant()} value." });
