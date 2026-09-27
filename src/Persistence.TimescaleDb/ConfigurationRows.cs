@@ -41,7 +41,8 @@ internal static class ConfigurationRows
         string DriverKey,
         string ConnectionSettings,
         int ScanIntervalMs,
-        Guid? TemplateId)
+        Guid? TemplateId,
+        Guid? EdgeId)
     {
         internal Device ToDomain() => new()
         {
@@ -53,6 +54,17 @@ internal static class ConfigurationRows
             ConnectionSettings = ConnectionSettingsJson.Deserialize(ConnectionSettings),
             ScanInterval = TimeSpan.FromMilliseconds(ScanIntervalMs),
             TemplateId = TemplateId,
+            EdgeId = EdgeId,
+        };
+    }
+
+    internal sealed record EdgeRow(Guid Id, Guid TenantId, string Name)
+    {
+        internal Edge ToDomain() => new()
+        {
+            Id = Id,
+            TenantId = TenantId,
+            Name = Name,
         };
     }
 

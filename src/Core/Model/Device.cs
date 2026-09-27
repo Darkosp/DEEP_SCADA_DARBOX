@@ -53,4 +53,12 @@ public sealed class Device
     /// </summary>
     public IReadOnlyDictionary<string, string> TemplateParameters { get; init; } =
         new Dictionary<string, string>();
+
+    /// <summary>
+    /// The edge that acquires this device, or null when the Gateway polls it itself (ADR-0019).
+    /// A device belongs to at most one edge. When this is set the device's driver, settings and
+    /// tag addresses travel to that edge, which reads them and sends the values over the link —
+    /// the Gateway does not poll it.
+    /// </summary>
+    public Guid? EdgeId { get; set; }
 }

@@ -66,10 +66,23 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
                 """
                 SELECT id, site_id, folder_id, name, driver_key,
                        connection_settings::text AS connection_settings, scan_interval_ms,
-                       template_id
+                       template_id, edge_id
                 FROM device_active
                 ORDER BY name
                 """,
+                cancellationToken: cancellationToken))
+            .ConfigureAwait(false);
+
+        return rows.Select(r => r.ToDomain()).ToList();
+    }
+
+    public async Task<IReadOnlyList<Edge>> GetEdgesAsync(CancellationToken cancellationToken)
+    {
+        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+
+        var rows = await connection.QueryAsync<EdgeRow>(
+            new CommandDefinition(
+                "SELECT id, tenant_id, name FROM edge_active ORDER BY name",
                 cancellationToken: cancellationToken))
             .ConfigureAwait(false);
 

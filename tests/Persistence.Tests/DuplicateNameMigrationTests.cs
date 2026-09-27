@@ -113,12 +113,16 @@ public sealed class DuplicateNameMigrationTests
                 },
                 audit);
 
-            // And the indexes exist, unique, recorded as applied.
+            // And the indexes exist, unique, recorded as applied. The edge index is 0012's, not
+            // this migration's, but it answers the same question — a name unique within its
+            // parent (ADR-0015) — so it belongs in this list too.
             var indexes = await ListAsync(db, """
                 SELECT c.relname FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
                 WHERE i.indisunique AND c.relname LIKE 'ux\_%\_name\_%' ORDER BY 1
                 """);
-            Assert.Equal(["ux_device_name_in_parent", "ux_folder_name_in_parent", "ux_tag_name_in_device"], indexes);
+            Assert.Equal(
+                ["ux_device_name_in_parent", "ux_edge_name_in_tenant", "ux_folder_name_in_parent", "ux_tag_name_in_device"],
+                indexes);
             Assert.Equal(["1"], await ListAsync(db, $"SELECT count(*)::text FROM schemaversions WHERE scriptname = '{Script}'"));
         }
         finally

@@ -61,6 +61,35 @@ public interface IDeviceRepository
 }
 
 /// <summary>
+/// Reads and writes the edges of the tenant (ADR-0019).
+/// </summary>
+/// <remarks>
+/// An edge's name is its identity — the name in its certificate and the segment the broker
+/// carries its topics under (ADR-0017) — so it is unique across the tenant rather than within a
+/// site, and it is not display-only the way a folder's or a device's name is. Deletion is soft
+/// (ADR-0009), like every other configuration entity.
+/// </remarks>
+public interface IEdgeRepository
+{
+    Task<IReadOnlyList<Edge>> GetAllAsync(CancellationToken cancellationToken);
+
+    Task AddAsync(Edge edge, CancellationToken cancellationToken);
+
+    Task UpdateAsync(Edge edge, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Soft-deletes an edge that no live device is assigned to.
+    /// </summary>
+    /// <exception cref="ConfigurationConflictException">
+    /// A live device is still assigned to this edge. There is deliberately no cascade and no
+    /// implicit unassignment, the rule a folder already follows: what an edge reads must never
+    /// change as a side effect of something else (ADR-0001 §6, ADR-0019), so the operator
+    /// unassigns its devices explicitly first.
+    /// </exception>
+    Task DeleteAsync(Guid edgeId, CancellationToken cancellationToken);
+}
+
+/// <summary>
 /// Device templates and the instances made from them (ADR-0010).
 /// </summary>
 /// <remarks>

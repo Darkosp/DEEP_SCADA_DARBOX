@@ -242,7 +242,7 @@ public sealed class DeviceTemplateRepository : IDeviceTemplateRepository
                 """
                 SELECT id, site_id, folder_id, name, driver_key,
                        connection_settings::text AS connection_settings, scan_interval_ms,
-                       template_id
+                       template_id, edge_id
                 FROM device_active
                 WHERE template_id = @templateId
                 """,
@@ -285,6 +285,7 @@ public sealed class DeviceTemplateRepository : IDeviceTemplateRepository
                 ConnectionSettings = device.ConnectionSettings,
                 ScanInterval = device.ScanInterval,
                 TemplateId = templateId,
+                EdgeId = device.EdgeId,
                 TemplateParameters = byDevice.GetValueOrDefault(device.Id, new Dictionary<string, string>()),
             })
             .ToList();

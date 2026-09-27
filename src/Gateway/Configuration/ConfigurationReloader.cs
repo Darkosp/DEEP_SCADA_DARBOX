@@ -38,5 +38,6 @@ public sealed class ConfigurationReloader
             await store.GetFoldersAsync(cancellationToken).ConfigureAwait(false),
             await store.GetDevicesAsync(cancellationToken).ConfigureAwait(false),
             await store.GetTagsAsync(cancellationToken).ConfigureAwait(false),
-            await store.GetAlarmDefinitionsAsync(cancellationToken).ConfigureAwait(false));
+            await store.GetAlarmDefinitionsAsync(cancellationToken).ConfigureAwait(false),
+            await store.GetEdgesAsync(cancellationToken).ConfigureAwait(false));
 }

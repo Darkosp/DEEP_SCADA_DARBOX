@@ -19,13 +19,14 @@ internal static class UniqueNames
     public const string DeviceIndex = "ux_device_name_in_parent";
     public const string FolderIndex = "ux_folder_name_in_parent";
     public const string TagIndex = "ux_tag_name_in_device";
+    public const string EdgeIndex = "ux_edge_name_in_tenant";
 
     private const string UniqueViolation = "23505";
 
-    /// <summary>Whether this is one of the three name indexes refusing a write.</summary>
+    /// <summary>Whether this is one of the name indexes refusing a write.</summary>
     public static bool IsNameClash(PostgresException exception) =>
         exception.SqlState == UniqueViolation &&
-        exception.ConstraintName is DeviceIndex or FolderIndex or TagIndex;
+        exception.ConstraintName is DeviceIndex or FolderIndex or TagIndex or EdgeIndex;
 
     public static async Task<ConfigurationConflictException> DeviceTakenAsync(
         NpgsqlDataSource dataSource, string name, Guid siteId, Guid? folderId, CancellationToken cancellationToken) =>
@@ -38,6 +39,13 @@ internal static class UniqueNames
     public static async Task<ConfigurationConflictException> TagTakenAsync(
         NpgsqlDataSource dataSource, string name, Guid deviceId, CancellationToken cancellationToken) =>
         new($"The device {await DevicePathAsync(dataSource, deviceId, cancellationToken).ConfigureAwait(false)} already has a tag named '{name}'.");
+
+    /// <summary>
+    /// An edge whose name is already taken. No place to name, unlike the others: an edge's name
+    /// is unique across the tenant rather than within a parent (ADR-0015, ADR-0019).
+    /// </summary>
+    public static ConfigurationConflictException EdgeTaken(string name) =>
+        new($"An edge named '{name}' already exists. An edge's name is the name in its certificate, so it must be unique across the deployment.");
 
     /// <summary>A tag added to a template, which one of the devices made from it already has.</summary>
     public static async Task<ConfigurationConflictException> TemplateTagTakenAsync(

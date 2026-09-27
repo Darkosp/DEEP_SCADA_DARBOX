@@ -25,6 +25,7 @@ public sealed class TagCatalog
     private readonly Dictionary<Guid, Device> _devicesById;
     private readonly Dictionary<Guid, Site> _sitesById;
     private readonly Dictionary<Guid, Folder> _foldersById;
+    private readonly Dictionary<Guid, Edge> _edgesById;
     private readonly Dictionary<Guid, string> _pathsByTagId;
     private readonly Dictionary<Guid, List<AlarmDefinition>> _alarmsByTagId;
 
@@ -34,13 +35,18 @@ public sealed class TagCatalog
         IReadOnlyList<Folder> folders,
         IReadOnlyList<Device> devices,
         IReadOnlyList<Tag> tags,
-        IReadOnlyList<AlarmDefinition>? alarms = null)
+        IReadOnlyList<AlarmDefinition>? alarms = null,
+        IReadOnlyList<Edge>? edges = null)
     {
         Tenant = tenant;
         _sitesById = sites.ToDictionary(s => s.Id);
         _foldersById = folders.ToDictionary(f => f.Id);
         _devicesById = devices.ToDictionary(d => d.Id);
         _tagsById = tags.ToDictionary(t => t.Id);
+
+        // Edges are optional so that a caller with no edges to speak of — most tests, and any
+        // catalogue built before an edge was configured — need not name the empty list.
+        _edgesById = (edges ?? []).ToDictionary(e => e.Id);
 
         _alarmsByTagId = (alarms ?? [])
             .GroupBy(alarm => alarm.TagId)
@@ -63,9 +69,21 @@ public sealed class TagCatalog
 
     public IReadOnlyCollection<Site> Sites => _sitesById.Values;
 
+    public IReadOnlyCollection<Edge> Edges => _edgesById.Values;
+
     public Tag? FindTag(Guid tagId) => _tagsById.GetValueOrDefault(tagId);
 
     public Device? FindDevice(Guid deviceId) => _devicesById.GetValueOrDefault(deviceId);
+
+    public Edge? FindEdge(Guid edgeId) => _edgesById.GetValueOrDefault(edgeId);
+
+    /// <summary>
+    /// The edge that acquires a device, or null when the Gateway polls it itself (ADR-0019).
+    /// </summary>
+    public Edge? EdgeOfDevice(Guid deviceId) =>
+        _devicesById.TryGetValue(deviceId, out var device) && device.EdgeId is { } edgeId
+            ? _edgesById.GetValueOrDefault(edgeId)
+            : null;
 
     public Folder? FindFolder(Guid folderId) => _foldersById.GetValueOrDefault(folderId);
 

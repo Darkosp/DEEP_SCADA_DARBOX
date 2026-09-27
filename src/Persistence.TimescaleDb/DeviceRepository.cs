@@ -12,7 +12,7 @@ public sealed class DeviceRepository : IDeviceRepository
     private const string SelectColumns = """
         SELECT id, site_id, folder_id, name, driver_key,
                connection_settings::text AS connection_settings, scan_interval_ms,
-               template_id
+               template_id, edge_id
         FROM device_active
         """;
 
@@ -58,8 +58,8 @@ public sealed class DeviceRepository : IDeviceRepository
         {
             await connection.ExecuteAsync(new CommandDefinition(
                 """
-                INSERT INTO device (id, site_id, folder_id, name, driver_key, connection_settings, scan_interval_ms)
-                VALUES (@Id, @SiteId, @FolderId, @Name, @DriverKey, @ConnectionSettings::jsonb, @ScanIntervalMs)
+                INSERT INTO device (id, site_id, folder_id, name, driver_key, connection_settings, scan_interval_ms, edge_id)
+                VALUES (@Id, @SiteId, @FolderId, @Name, @DriverKey, @ConnectionSettings::jsonb, @ScanIntervalMs, @EdgeId)
                 """,
                 ToParameters(device),
                 cancellationToken: cancellationToken))
@@ -76,6 +76,9 @@ public sealed class DeviceRepository : IDeviceRepository
         // site_id is deliberately not updatable. It is the tenant and security scope
         // (ADR-0004), not a placement field: moving a device between sites would change
         // who can see its history, which is not something an edit form should do.
+        //
+        // edge_id, by contrast, is: assigning a device to an edge or releasing it (ADR-0019)
+        // is an ordinary edit of the device, and the only way the assignment ever changes.
         await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
 
         int updated;
@@ -88,7 +91,8 @@ public sealed class DeviceRepository : IDeviceRepository
                     name = @Name,
                     driver_key = @DriverKey,
                     connection_settings = @ConnectionSettings::jsonb,
-                    scan_interval_ms = @ScanIntervalMs
+                    scan_interval_ms = @ScanIntervalMs,
+                    edge_id = @EdgeId
                 WHERE id = @Id AND deleted_at IS NULL
                 """,
                 ToParameters(device),
@@ -147,5 +151,6 @@ public sealed class DeviceRepository : IDeviceRepository
         device.DriverKey,
         ConnectionSettings = ConnectionSettingsJson.Serialize(device.ConnectionSettings),
         ScanIntervalMs = (int)device.ScanInterval.TotalMilliseconds,
+        device.EdgeId,
     };
 }
