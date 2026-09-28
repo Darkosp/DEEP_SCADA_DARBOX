@@ -49,6 +49,8 @@
               (click)="showTemplates()">Templates</button>
       <button type="button" class="ghost" [class.current]="view() === 'users'"
               (click)="showUsers()">Users</button>
+      <button type="button" class="ghost" [class.current]="view() === 'edges'"
+              (click)="showEdges()">Edges</button>
     }
   </nav>
 
@@ -394,6 +396,95 @@
       </table>
     </section>
   </main>
+} @else if (view() === 'edges') {
+  <main>
+    <aside>
+      <div class="pane-head">
+        <h2>Edges</h2>
+        <div class="actions">
+          <button type="button" class="ghost" (click)="startNewEdge()">Add edge</button>
+        </div>
+      </div>
+
+      @for (edge of edges(); track edge.id) {
+        <button type="button" class="template"
+                [class.selected]="edge.id === edgeDraft()?.id"
+                (click)="editEdge(edge)">{{ edge.name }}</button>
+      } @empty {
+        @if (edgesRead()) {
+          <p class="muted">No edges yet.</p>
+        } @else {
+          <p class="muted">The edges could not be read.</p>
+        }
+      }
+    </aside>
+
+    <section>
+      @if (edgeDraft(); as draft) {
+        <h2>{{ draft.id ? 'Edit edge' : 'New edge' }}</h2>
+        <form class="form" (ngSubmit)="saveEdge()">
+          <label>Name<input name="edgeName" required [(ngModel)]="draft.name" /></label>
+          @if (nameErrorFor('edge'); as taken) {
+            <p class="field-error" role="alert">{{ taken }}</p>
+          }
+
+          <!-- The one device this edge dials. While devices are assigned it cannot be moved:
+               that link is the only thing reading their tags (ADR-0019). -->
+          <label>Link device
+            <select name="link" [disabled]="linkLocked(draft)" [(ngModel)]="draft.linkDeviceId">
+              @for (choice of linkChoices(draft); track choice.id) {
+                <option [ngValue]="choice.id">{{ choice.label }}</option>
+              }
+            </select>
+          </label>
+          @if (linkLocked(draft)) {
+            <p class="muted">This edge still reads devices, so its link cannot be moved. Unassign
+              them first.</p>
+          } @else {
+            <p class="muted">A link has to be a device that pushes its values; a polled one has
+              nothing to send (ADR-0016).</p>
+          }
+
+          @if (draft.id) {
+            @if (readsOf(draft); as reads) {
+              @if (reads.names.length === 0 && reads.elsewhere === 0) {
+                <p class="muted">No device is assigned to this edge yet.</p>
+              } @else {
+                @if (reads.names.length > 0) {
+                  <p class="muted">Reads {{ reads.names.join(', ') }}.</p>
+                }
+                @if (reads.elsewhere > 0) {
+                  <p class="muted">{{ reads.elsewhere }} more outside this Site.</p>
+                }
+              }
+            }
+          }
+
+          <div class="actions">
+            <button type="submit" [disabled]="draft.name.trim().length === 0 || saving()">Save</button>
+            <button type="button" class="ghost" (click)="edgeDraft.set(null)">Cancel</button>
+            @if (draft.id) {
+              <button type="button" class="ghost danger" (click)="askDeleteEdge(draft)">Delete</button>
+            }
+          </div>
+
+          @if (pendingDelete(); as pending) {
+            @if (pending.kind === 'edge') {
+              <div class="confirm">
+                <p>Delete {{ pending.label }}? {{ pending.warning }}</p>
+                <div class="actions">
+                  <button type="button" class="danger" (click)="confirmDelete()">Delete</button>
+                  <button type="button" class="ghost" (click)="pendingDelete.set(null)">Cancel</button>
+                </div>
+              </div>
+            }
+          }
+        </form>
+      } @else {
+        <p class="muted">Pick an edge to see what it reads, or add one.</p>
+      }
+    </section>
+  </main>
 } @else {
 <main>
   <aside>
@@ -479,8 +570,26 @@
           </select>
         </label>
 
+        <!-- Which edge reads this device. An edge reads the devices assigned to it, so this is
+             the assignment itself rather than a property of the edge (ADR-0019). -->
+        @if (edgesRead()) {
+          <label>Edge
+            <select name="edge" [(ngModel)]="draft.edgeId">
+              @for (choice of edgeChoices(); track choice.id) {
+                <option [ngValue]="choice.id">{{ choice.label }}</option>
+              }
+            </select>
+          </label>
+          @if (edgeNote(draft); as note) {
+            <p class="muted">{{ note }}</p>
+          }
+        } @else {
+          <p class="muted">The deployment's edges could not be read, so this device's assignment
+            cannot be shown or changed. Reopen this form once the Gateway answers.</p>
+        }
+
         <div class="actions">
-          <button type="submit" [disabled]="draft.name.trim().length === 0 || saving()">Save</button>
+          <button type="submit" [disabled]="draft.name.trim().length === 0 || saving() || !edgesRead()">Save</button>
           <button type="button" class="ghost" (click)="deviceDraft.set(null)">Cancel</button>
         </div>
       </form>

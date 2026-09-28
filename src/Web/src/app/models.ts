@@ -171,6 +171,117 @@ export function folderOptions(tree: SiteTree | null): FolderOption[] {
   return options;
 }
 
+// ---- edges (ADR-0019) -------------------------------------------------------
+
+/**
+ * An edge: one agent on the plant floor that reads the devices assigned to it and pushes their
+ * values on. It hangs off the deployment rather than a Site, and its name is the identity in
+ * its own certificate (ADR-0019).
+ */
+export interface Edge {
+  id: string;
+  name: string;
+  /** The device carrying its link, or null while it has none. */
+  linkDeviceId: string | null;
+  /** The devices it reads. Assigning one is an ordinary edit of the device (ADR-0019). */
+  deviceIds: string[];
+}
+
+/** An edge as a picker option, where null is "not on an edge". */
+export interface EdgeOption {
+  id: string | null;
+  label: string;
+}
+
+/** The edges as a picker, "not on an edge" first. */
+export function edgeOptions(edges: Edge[]): EdgeOption[] {
+  return [
+    { id: null, label: 'Not on an edge' },
+    ...edges.map((edge) => ({ id: edge.id, label: edge.name })),
+  ];
+}
+
+/**
+ * The edge a device is assigned to, or null.
+ *
+ * Read from the edges rather than from the tree, because the tree carries what a device is and
+ * the assignment is not one of those things: it belongs to the edge, which is why assigning is
+ * an ordinary edit of the device and nothing else (ADR-0019).
+ */
+export function edgeOfDevice(edges: Edge[], deviceId: string): Edge | null {
+  return edges.find((edge) => edge.deviceIds.includes(deviceId)) ?? null;
+}
+
+/** Every device in a site tree, folders walked. */
+export function treeDevices(
+  tree: { folders: TreeFolder[]; devices: TreeDevice[] } | null,
+): TreeDevice[] {
+  const all: TreeDevice[] = [...(tree?.devices ?? [])];
+
+  const walk = (folders: TreeFolder[]): void => {
+    for (const folder of folders) {
+      all.push(...folder.devices);
+      walk(folder.folders);
+    }
+  };
+
+  walk(tree?.folders ?? []);
+  return all;
+}
+
+/**
+ * What an edge reads, as far as the tree being browsed knows it.
+ *
+ * The client holds one Site's tree at a time and an edge is tenant-wide, so a device this tree
+ * does not have is counted rather than named: a name would have to be invented for it.
+ */
+export function edgeReads(
+  tree: { folders: TreeFolder[]; devices: TreeDevice[] } | null,
+  edge: Edge,
+): { names: string[]; elsewhere: number } {
+  const devices = treeDevices(tree);
+  const names: string[] = [];
+  let elsewhere = 0;
+
+  for (const id of edge.deviceIds) {
+    const device = devices.find((candidate) => candidate.id === id);
+    if (device === undefined) {
+      elsewhere += 1;
+    } else {
+      names.push(device.name);
+    }
+  }
+
+  return { names, elsewhere };
+}
+
+/**
+ * The devices an edge's link may be: the pushing devices of the Site being browsed, and the one
+ * it already has even when that device is not in this Site.
+ *
+ * A link has to be a pushing device, because a polled one would leave every device the edge
+ * reads with nothing reading it (ADR-0016). The one it already has is kept in the list even
+ * when this Site cannot offer it, because a picker that dropped it would release the link the
+ * next time anything on the form was saved.
+ */
+export function linkOptions(
+  devices: TreeDevice[],
+  drivers: DriverShape[],
+  current: string | null,
+): EdgeOption[] {
+  const pushing = devices.filter((device) => pushes(drivers, device.driverKey));
+  const options: EdgeOption[] = [
+    { id: null, label: 'No link' },
+    ...pushing.map((device) => ({ id: device.id, label: device.name })),
+  ];
+
+  if (current !== null && !pushing.some((device) => device.id === current)) {
+    options.push({ id: current, label: 'A device outside this Site' });
+  }
+
+  return options;
+}
+
 // ---- users and access (ADR-0011) --------------------------------------------
 
 /** A role on one Site. Admin is not one of them: it is tenant-wide, a flag on the user. */
@@ -439,8 +550,11 @@ export function pathWithinSite(tagPath: string, siteName: string): string {
   return tagPath.startsWith(prefix) ? tagPath.slice(prefix.length) : tagPath;
 }
 
-/** The forms whose name the Gateway may refuse as already taken (ADR-0015). */
-export type NameField = 'folder' | 'device' | 'tag' | 'instance' | 'templateTag';
+/**
+ * The forms whose name the Gateway may refuse as already taken (ADR-0015). An edge's name is
+ * unique in the deployment rather than in a Site, and it is refused the same way.
+ */
+export type NameField = 'folder' | 'device' | 'tag' | 'instance' | 'templateTag' | 'edge';
 
 /**
  * The Gateway's reason when it refused a name as already taken — a 409 — or null for any other

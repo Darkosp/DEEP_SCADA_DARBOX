@@ -7,6 +7,7 @@ import {
   AlarmEvent,
   DeviceTemplate,
   DriverShape,
+  Edge,
   LoginResponse,
   Site,
   SiteRole,
@@ -150,6 +151,27 @@ export class Api {
 
   deleteTag(deviceId: string, tagId: string): Promise<unknown> {
     return this.send('DELETE', `/api/devices/${deviceId}/tags/${tagId}`, null);
+  }
+
+  // ---- edges (Admin) ------------------------------------------------------
+
+  /**
+   * The deployment's edges (ADR-0019). Tenant-wide rather than per-Site, and Admin-only: an
+   * edge's name is the identity in its certificate and its segment of the broker's topic
+   * namespace, neither of which a Site scopes (ADR-0011).
+   */
+  edges(): Promise<Edge[]> {
+    return this.get<Edge[]>('/api/edges');
+  }
+
+  saveEdge(edgeId: string | null, body: { name: string; linkDeviceId: string | null }): Promise<unknown> {
+    return edgeId === null
+      ? this.send('POST', '/api/edges', body)
+      : this.send('PUT', `/api/edges/${edgeId}`, body);
+  }
+
+  deleteEdge(edgeId: string): Promise<unknown> {
+    return this.send('DELETE', `/api/edges/${edgeId}`, null);
   }
 
   // ---- alarms (Operator) --------------------------------------------------

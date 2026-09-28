@@ -11,6 +11,8 @@ import {
   AlarmDefinition,
   AlarmEvent,
   DeviceTemplate,
+  Edge,
+  EdgeOption,
   FolderOption,
   HistorySample,
   NumberField,
@@ -21,6 +23,11 @@ import {
   TemplateTag,
   TreeDevice,
   folderOptions,
+  edgeOfDevice,
+  edgeOptions,
+  edgeReads,
+  linkOptions,
+  treeDevices,
   DriverShape,
   deviceCount,
   noDataNote,
@@ -58,6 +65,15 @@ interface DeviceDraft {
   /** An emptied box makes this null, so it is read back through parseNumberField. */
   scanIntervalMs: NumberField;
   folderId: string | null;
+  /** The edge that reads this device, or null. Assigning is an ordinary device edit (ADR-0019). */
+  edgeId: string | null;
+}
+
+/** An edge as the form edits it, kept separate from the wire form. */
+interface EdgeDraft {
+  id: string | null;
+  name: string;
+  linkDeviceId: string | null;
 }
 
 /** A device being created from a template, with the parameters that template asks for. */
@@ -81,7 +97,7 @@ interface TemplateTagDraft {
 
 /** A delete the operator has started but not yet confirmed. */
 interface PendingDelete {
-  kind: 'folder' | 'device' | 'tag' | 'user';
+  kind: 'folder' | 'device' | 'tag' | 'user' | 'edge';
   id: string;
   ownerId: string;
   label: string;
@@ -152,6 +168,18 @@ export class App implements OnInit {
   protected readonly tagDraft = signal<TagDraft | null>(null);
   protected readonly newFolderName = signal('');
 
+  /**
+   * The deployment's edges (ADR-0019), read for an Admin because the device form assigns
+   * devices to them. Tenant-wide, so they are not reloaded with a Site.
+   */
+  protected readonly edges = signal<Edge[]>([]);
+
+  /** Whether the edges have been read at all. A device form cannot show or change an
+   *  assignment without them, and a picker that guessed would release one instead. */
+  protected readonly edgesRead = signal(false);
+
+  protected readonly edgeDraft = signal<EdgeDraft | null>(null);
+
   /** The drivers this build has, and which push — so a scan interval is offered only where it means something. */
   protected readonly drivers = signal<DriverShape[]>([]);
 
@@ -171,8 +199,8 @@ export class App implements OnInit {
     this.alarms().filter((alarm) => alarm.state === 'Active' || alarm.state === 'Cleared'),
   );
 
-  /** Which part of the app is on screen. Templates and Users exist only for an Admin. */
-  protected readonly view = signal<'browse' | 'templates' | 'users' | 'journal'>('browse');
+  /** Which part of the app is on screen. Templates, Users and Edges exist only for an Admin. */
+  protected readonly view = signal<'browse' | 'templates' | 'users' | 'journal' | 'edges'>('browse');
 
   /** The journal as last read. Not live: history does not change under the reader. */
   protected readonly journalEvents = signal<AlarmEvent[]>([]);
@@ -212,6 +240,7 @@ export class App implements OnInit {
   protected readonly passwordReset = signal<{ userId: string; username: string; password: string } | null>(null);
 
   protected readonly folderChoices = computed<FolderOption[]>(() => folderOptions(this.tree()));
+  protected readonly edgeChoices = computed<EdgeOption[]>(() => edgeOptions(this.edges()));
 
   /** The live value of the selected tag, or null before its first reading. */
   protected readonly liveValue = computed<TagSnapshot | null>(() => {
@@ -304,6 +333,12 @@ export class App implements OnInit {
     } catch (error) {
       this.report(error);
     }
+
+    // Edges are the tenant's and only an Admin may read them: a 401 would sign the user out,
+    // so this is asked for only where it may be answered (ADR-0019, ADR-0011).
+    if (this.auth.isAdmin()) {
+      await this.reloadEdges();
+    }
   }
 
   protected drivePushes(driverKey: string): boolean {
@@ -385,6 +420,9 @@ export class App implements OnInit {
     this.passwordReset.set(null);
     this.templates.set([]);
     this.selectedTemplate.set(null);
+    this.edges.set([]);
+    this.edgesRead.set(false);
+    this.edgeDraft.set(null);
   }
 
   // ---- browsing -----------------------------------------------------------
@@ -437,6 +475,102 @@ export class App implements OnInit {
     } catch (error) {
       this.report(error);
     }
+
+    // Edges are the tenant's and only an Admin may read them: a 401 would sign the user out,
+    // so this is asked for only where it may be answered (ADR-0019, ADR-0011).
+    if (this.auth.isAdmin()) {
+      await this.reloadEdges();
+    }
+  }
+
+  // ---- edges (Admin) ------------------------------------------------------
+
+  /** The edges as the Gateway has them. Admin-only, so it is asked for only where it may be. */
+  protected async reloadEdges(): Promise<void> {
+    try {
+      this.edges.set(await this.api.edges());
+      this.edgesRead.set(true);
+    } catch (error) {
+      this.report(error);
+    }
+  }
+
+  protected async showEdges(): Promise<void> {
+    this.view.set('edges');
+    this.edgeDraft.set(null);
+    await this.reloadEdges();
+  }
+
+  protected startNewEdge(): void {
+    this.edgeDraft.set({ id: null, name: '', linkDeviceId: null });
+  }
+
+  protected editEdge(edge: Edge): void {
+    this.edgeDraft.set({ id: edge.id, name: edge.name, linkDeviceId: edge.linkDeviceId });
+  }
+
+  protected async saveEdge(): Promise<void> {
+    const draft = this.edgeDraft();
+    if (!draft) {
+      return;
+    }
+
+    await this.saveNamed('edge', async () => {
+      await this.api.saveEdge(draft.id, { name: draft.name, linkDeviceId: draft.linkDeviceId });
+      this.edgeDraft.set(null);
+      await this.reloadEdges();
+    });
+  }
+
+  protected askDeleteEdge(draft: EdgeDraft): void {
+    if (draft.id === null) {
+      return;
+    }
+
+    this.pendingDelete.set({
+      kind: 'edge',
+      id: draft.id,
+      ownerId: '',
+      label: `edge "${draft.name}"`,
+      warning: 'Its certificate stops being accepted and the broker stops carrying its topics.',
+    });
+  }
+
+  /** The devices this edge's link may be: this Site's pushing ones, and the one it has. */
+  protected linkChoices(draft: EdgeDraft): EdgeOption[] {
+    return linkOptions(treeDevices(this.tree()), this.drivers(), draft.linkDeviceId);
+  }
+
+  /** Whether the link is fixed: while a device is assigned it is the only thing reading its
+   *  tags, and the Gateway refuses to move it (ADR-0019). */
+  protected linkLocked(draft: EdgeDraft): boolean {
+    const reads = this.readsOf(draft);
+    return reads.names.length + reads.elsewhere > 0;
+  }
+
+  /** What this edge reads, as far as the Site being browsed knows it. */
+  protected readsOf(draft: EdgeDraft): { names: string[]; elsewhere: number } {
+    const edge =
+      draft.id === null ? null : (this.edges().find((candidate) => candidate.id === draft.id) ?? null);
+
+    return edge === null ? { names: [], elsewhere: 0 } : edgeReads(this.tree(), edge);
+  }
+
+  /** Why the edge chosen on a device form cannot take it, or null. */
+  protected edgeNote(draft: DeviceDraft): string | null {
+    const carrier =
+      draft.id === null ? null : (this.edges().find((edge) => edge.linkDeviceId === draft.id) ?? null);
+
+    if (carrier !== null && draft.edgeId !== null) {
+      return `This device carries the link for edge "${carrier.name}", so it cannot also be read by an edge.`;
+    }
+
+    const chosen =
+      draft.edgeId === null ? null : (this.edges().find((edge) => edge.id === draft.edgeId) ?? null);
+
+    return chosen !== null && chosen.linkDeviceId === null
+      ? 'That edge has no link device yet, so it has nothing to read with. Give it one on the Edges screen first.'
+      : null;
   }
 
   protected async select(selection: Selection): Promise<void> {
@@ -660,6 +794,7 @@ export class App implements OnInit {
       ],
       scanIntervalMs: 1000,
       folderId: null,
+      edgeId: null,
     });
   }
 
@@ -673,6 +808,8 @@ export class App implements OnInit {
       // should the driver be changed to a polled one.
       scanIntervalMs: device.scanIntervalMs ?? 1000,
       folderId: device.folderId,
+      // The tree does not carry the assignment; the edges do (ADR-0019).
+      edgeId: edgeOfDevice(this.edges(), device.id)?.id ?? null,
     });
   }
 
@@ -707,10 +844,12 @@ export class App implements OnInit {
         connectionSettings: settingsToMap(draft.settings),
         scanIntervalMs: scan.value,
         folderId: draft.folderId,
+        edgeId: draft.edgeId,
       });
 
       this.deviceDraft.set(null);
       await this.reloadTree();
+      await this.reloadEdges();
     });
   }
 
@@ -805,6 +944,14 @@ export class App implements OnInit {
         await this.api.deactivateUser(pending.id);
         this.pendingDelete.set(null);
         await this.loadUsers();
+        return;
+      }
+
+      if (pending.kind === 'edge') {
+        await this.api.deleteEdge(pending.id);
+        this.pendingDelete.set(null);
+        this.edgeDraft.set(null);
+        await this.reloadEdges();
         return;
       }
 
