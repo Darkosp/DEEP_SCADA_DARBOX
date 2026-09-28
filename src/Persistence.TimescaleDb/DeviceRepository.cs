@@ -54,20 +54,36 @@ public sealed class DeviceRepository : IDeviceRepository
     {
         await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
 
+        // A device may be created already assigned to an edge (ADR-0019), and that assignment is
+        // guarded exactly as an edit's is: the Gateway stops polling a device an edge reads, so
+        // assigning one to an edge with no link device — or assigning a device that carries a
+        // link — would leave its tags with no source at all. The guard is part of the statement
+        // for the same reason it is on the update: a concurrent edit of the edge cannot land
+        // behind the check.
+        const string sql = """
+            INSERT INTO device (id, site_id, folder_id, name, driver_key, connection_settings, scan_interval_ms, edge_id)
+            SELECT @Id, @SiteId, @FolderId, @Name, @DriverKey, @ConnectionSettings::jsonb, @ScanIntervalMs, @EdgeId
+            WHERE @EdgeId IS NULL
+               OR (EXISTS (SELECT 1 FROM edge_active
+                           WHERE id = @EdgeId AND link_device_id IS NOT NULL)
+                   AND NOT EXISTS (SELECT 1 FROM edge_active WHERE link_device_id = @Id))
+            """;
+
+        int inserted;
         try
         {
-            await connection.ExecuteAsync(new CommandDefinition(
-                """
-                INSERT INTO device (id, site_id, folder_id, name, driver_key, connection_settings, scan_interval_ms, edge_id)
-                VALUES (@Id, @SiteId, @FolderId, @Name, @DriverKey, @ConnectionSettings::jsonb, @ScanIntervalMs, @EdgeId)
-                """,
-                ToParameters(device),
-                cancellationToken: cancellationToken))
+            inserted = await connection.ExecuteAsync(
+                new CommandDefinition(sql, ToParameters(device), cancellationToken: cancellationToken))
                 .ConfigureAwait(false);
         }
         catch (PostgresException exception) when (UniqueNames.IsNameClash(exception))
         {
             throw await UniqueNames.DeviceTakenAsync(_dataSource, device.Name, device.SiteId, device.FolderId, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (inserted == 0)
+        {
+            throw await RefuseAssignmentAsync(device, cancellationToken).ConfigureAwait(false);
         }
     }
 
