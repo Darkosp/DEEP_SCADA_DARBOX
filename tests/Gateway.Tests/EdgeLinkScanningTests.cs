@@ -127,7 +127,7 @@ public sealed class EdgeLinkScanningTests : IClassFixture<GatewayTestHost>
 
         var history = await response.Content.ReadFromJsonAsync<JsonElement>();
         return history.GetProperty("samples").EnumerateArray().Any(sample =>
-            sample.GetProperty("value").GetProperty("kind").GetString() == "Numeric"
+            sample.GetProperty("value").GetProperty("kind").GetString() == "numeric"
             && sample.GetProperty("value").GetProperty("numeric").GetDouble() == value);
     }
 }
