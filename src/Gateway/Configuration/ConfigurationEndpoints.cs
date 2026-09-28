@@ -44,6 +44,7 @@ internal static class ConfigurationEndpoints
         MapDevices(app);
         MapTags(app);
         MapTagDeletion(app);
+        app.MapEdgeApi();
     }
 
     private static void MapFolders(WebApplication app)
@@ -227,7 +228,7 @@ internal static class ConfigurationEndpoints
     /// Runs a configuration write, reloads the catalogue on success, and turns the
     /// failures this layer can expect into client errors rather than 500s.
     /// </summary>
-    private static async Task<IResult> SaveAsync(
+    internal static async Task<IResult> SaveAsync(
         Func<Task> write,
         ConfigurationReloader reloader,
         CancellationToken cancellationToken,
@@ -274,6 +275,10 @@ internal static class ConfigurationEndpoints
             Name = request.Name,
             DriverKey = request.DriverKey,
             ConnectionSettings = request.ConnectionSettings,
+            // Which edge acquires this device, or none for the Gateway to poll it itself
+            // (ADR-0019). The repository refuses an assignment that would leave the device's
+            // tags with no source at all.
+            EdgeId = request.EdgeId,
         };
 
         // A pushing device has none (ADR-0016): the stored column keeps its default, nothing

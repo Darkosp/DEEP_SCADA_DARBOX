@@ -160,6 +160,7 @@ public static class GatewayApp
         services.AddSingleton<IAlarmDefinitionRepository, AlarmDefinitionRepository>();
         services.AddSingleton<IDeviceTemplateRepository, DeviceTemplateRepository>();
         services.AddSingleton<IDeviceRepository, DeviceRepository>();
+        services.AddSingleton<IEdgeRepository, EdgeRepository>();
         services.AddSingleton<ITagRepository, TagRepository>();
         services.AddSingleton<IHistorian, TimescaleHistorian>();
         services.AddSingleton<ITagValueSubscriber, SignalRTagBroadcaster>();

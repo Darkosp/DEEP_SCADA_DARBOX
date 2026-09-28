@@ -1,11 +1,6 @@
 using System.Net.Http.Json;
 using System.Text.Json;
-using Microsoft.Extensions.DependencyInjection;
-using Npgsql;
-using ScadaDarbox.Core.Configuration;
-using ScadaDarbox.Core.Model;
-using ScadaDarbox.Core.Tags;
-using ScadaDarbox.Gateway.Configuration;
+using ScadaDarbox.Gateway.Contracts;
 using ScadaDarbox.Gateway.Tests.Hosting;
 using ScadaDarbox.Persistence.TimescaleDb;
 
@@ -71,37 +66,28 @@ public sealed class EdgeLinkScanningTests : IClassFixture<GatewayTestHost>
     }
 
     /// <summary>
-    /// Assigns a device to a new edge the way a later slice's <c>/api/edges</c> will: through the
-    /// repository, then a catalogue reload. No endpoint does this yet — ADR-0019 leaves it to a
-    /// later slice — so the test writes the row through the same repository that slice will use
-    /// rather than through SQL of its own.
+    /// Assigns a device to a new edge through the API an operator uses: create the edge naming the
+    /// device that carries its link, then edit the device to name that edge (ADR-0019).
     /// </summary>
-    private async Task<Edge> AssignAsync(Guid deviceId, Guid linkDeviceId)
+    private async Task AssignAsync(Guid deviceId, Guid linkDeviceId)
     {
-        var dataSource = _host.Services.GetRequiredService<NpgsqlDataSource>();
-        var tenant = await _host.Services.GetRequiredService<IConfigurationStore>()
-            .GetTenantAsync(CancellationToken.None);
+        using var client = _host.CreateClient(await _host.LoginAsAdminAsync());
 
-        var edge = new Edge
-        {
-            Id = Guid.NewGuid(),
-            TenantId = tenant.Id,
-            Name = $"edge-{Guid.NewGuid():N}",
-            LinkDeviceId = linkDeviceId,
-        };
+        using var created = await client.PostAsJsonAsync(
+            "/api/edges", new { name = $"edge-{Guid.NewGuid():N}", linkDeviceId });
+        created.EnsureSuccessStatusCode();
+        var edgeId = await created.Content.ReadFromJsonAsync<Guid>();
 
-        await new EdgeRepository(dataSource).AddAsync(edge, CancellationToken.None);
-
-        var devices = _host.Services.GetRequiredService<IDeviceRepository>();
-        var device = await devices.FindAsync(deviceId, CancellationToken.None)
+        // Assigning is an ordinary edit of the device (ADR-0019 §2), so the device is saved whole
+        // with the edge it now belongs to — the same request the device form makes.
+        var device = await client.GetFromJsonAsync<TreeDeviceDto>($"/api/devices/{deviceId}")
             ?? throw new InvalidOperationException($"Device {deviceId} was not found.");
 
-        device.EdgeId = edge.Id;
-        await devices.UpdateAsync(device, CancellationToken.None);
-
-        await _host.Services.GetRequiredService<ConfigurationReloader>().ReloadAsync(CancellationToken.None);
-
-        return edge;
+        using var assigned = await client.PutAsJsonAsync(
+            $"/api/sites/{Bitola}/devices/{deviceId}",
+            new SaveDeviceRequest(
+                device.Name, device.DriverKey, device.ConnectionSettings, device.ScanIntervalMs, device.FolderId, edgeId));
+        assigned.EnsureSuccessStatusCode();
     }
 
     private static async Task<string?> QualityOfAsync(HttpClient client, Guid tagId)

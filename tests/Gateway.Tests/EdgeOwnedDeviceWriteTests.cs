@@ -1,11 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
-using Microsoft.Extensions.DependencyInjection;
-using Npgsql;
-using ScadaDarbox.Core.Configuration;
-using ScadaDarbox.Core.Model;
-using ScadaDarbox.Core.Tags;
-using ScadaDarbox.Gateway.Configuration;
+using ScadaDarbox.Gateway.Contracts;
 using ScadaDarbox.Gateway.Tests.Hosting;
 using ScadaDarbox.Persistence.TimescaleDb;
 
@@ -33,14 +28,14 @@ public sealed class EdgeOwnedDeviceWriteTests : IClassFixture<GatewayTestHost>
         var edgeOwned = await _host.CreateLiveDeviceAsync(admin, Bitola, "Edge-owned write probe");
         var gatewayOwned = await _host.CreateLiveDeviceAsync(admin, Bitola, "Gateway-owned write probe");
 
-        var edge = await AssignToNewEdgeAsync(admin, edgeOwned.DeviceId);
+        var edgeName = await AssignToNewEdgeAsync(admin, edgeOwned.DeviceId);
 
         using var asOperator = _host.CreateClient(@operator.Token);
 
         // Refused, and named: the operator learns which edge holds the device, not that it failed.
         using var refused = await asOperator.PostAsJsonAsync($"/api/tags/{edgeOwned.TagId}/value", new { value = 42 });
         Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
-        Assert.Contains(edge.Name, await refused.Content.ReadAsStringAsync());
+        Assert.Contains(edgeName, await refused.Content.ReadAsStringAsync());
 
         // Refused, not attempted: nothing reached a driver, and the attempt is in the journal.
         Assert.DoesNotContain(_host.Drivers.Writes, write => write.Tag.TagId == edgeOwned.TagId);
@@ -55,44 +50,38 @@ public sealed class EdgeOwnedDeviceWriteTests : IClassFixture<GatewayTestHost>
     }
 
     /// <summary>
-    /// Assigns a device to a new edge the way a later slice's <c>/api/edges</c> will: through the
-    /// repository, then a catalogue reload. No endpoint does this yet — ADR-0019 leaves it to a
-    /// later slice — so the test writes the row directly, through the same repository that slice
-    /// will use rather than through SQL of its own.
+    /// Assigns a device to a new edge through the API an operator uses: create the edge naming the
+    /// device that carries its link, then edit the device to name that edge (ADR-0019). The edge's
+    /// name comes back, so the refusal can be checked against it.
     /// </summary>
     /// <remarks>
     /// The edge names a link device before anything is assigned to it. The Gateway stops polling a
-    /// device an edge reads, so that link is the only thing that would feed its tags, and the
-    /// repository refuses an assignment without one (ADR-0019).
+    /// device an edge reads, so that link is the only thing that would feed its tags, and an
+    /// assignment without one is refused rather than left with nothing reading them (ADR-0019).
     /// </remarks>
-    private async Task<Edge> AssignToNewEdgeAsync(string adminToken, Guid deviceId)
+    private async Task<string> AssignToNewEdgeAsync(string adminToken, Guid deviceId)
     {
         var link = await _host.CreateLiveDeviceAsync(
             adminToken, Bitola, "Edge link probe", FakePushingDriverFactory.Key, scanIntervalMs: null);
 
-        var dataSource = _host.Services.GetRequiredService<NpgsqlDataSource>();
-        var tenant = await _host.Services.GetRequiredService<IConfigurationStore>()
-            .GetTenantAsync(CancellationToken.None);
+        using var client = _host.CreateClient(adminToken);
 
-        var edge = new Edge
-        {
-            Id = Guid.NewGuid(),
-            TenantId = tenant.Id,
-            Name = $"edge-{Guid.NewGuid():N}",
-            LinkDeviceId = link.DeviceId,
-        };
+        var name = $"edge-{Guid.NewGuid():N}";
+        using var created = await client.PostAsJsonAsync("/api/edges", new { name, linkDeviceId = link.DeviceId });
+        created.EnsureSuccessStatusCode();
+        var edgeId = await created.Content.ReadFromJsonAsync<Guid>();
 
-        await new EdgeRepository(dataSource).AddAsync(edge, CancellationToken.None);
-
-        var devices = _host.Services.GetRequiredService<IDeviceRepository>();
-        var device = await devices.FindAsync(deviceId, CancellationToken.None)
+        // Assigning is an ordinary edit of the device (ADR-0019 §2), so the device is saved whole
+        // with the edge it now belongs to — the same request the device form makes.
+        var device = await client.GetFromJsonAsync<TreeDeviceDto>($"/api/devices/{deviceId}")
             ?? throw new InvalidOperationException($"Device {deviceId} was not found.");
 
-        device.EdgeId = edge.Id;
-        await devices.UpdateAsync(device, CancellationToken.None);
+        using var assigned = await client.PutAsJsonAsync(
+            $"/api/sites/{Bitola}/devices/{deviceId}",
+            new SaveDeviceRequest(
+                device.Name, device.DriverKey, device.ConnectionSettings, device.ScanIntervalMs, device.FolderId, edgeId));
+        assigned.EnsureSuccessStatusCode();
 
-        await _host.Services.GetRequiredService<ConfigurationReloader>().ReloadAsync(CancellationToken.None);
-
-        return edge;
+        return name;
     }
 }
