@@ -25,18 +25,40 @@ public sealed class EdgeConfigurationPublishingTests : IAsyncLifetime
     private static readonly Guid PumpId = new("22222222-2222-4222-8222-222222222201");
     private static readonly Guid PressureId = new("33333333-3333-4333-8333-333333333301");
 
-    private readonly int _port = FreePort();
+    private int _port;
     private MqttServer? _broker;
 
     public async Task InitializeAsync()
     {
         var factory = new MqttServerFactory();
-        _broker = factory.CreateMqttServer(factory.CreateServerOptionsBuilder()
-            .WithDefaultEndpoint()
-            .WithDefaultEndpointBoundIPAddress(IPAddress.Loopback)
-            .WithDefaultEndpointPort(_port)
-            .Build());
-        await _broker.StartAsync();
+
+        // A port is taken by asking the OS for a free one, releasing it, and binding it a moment
+        // later — a window another process on a loaded machine can win. That is how this class
+        // failed once, in a whole-solution run, as "the first configuration was never published"
+        // twenty seconds later, when what had gone wrong was the bind at the start. Retrying puts
+        // the failure where it happens, naming the port, and leaves the publish alone.
+        for (var attempt = 0; ; attempt++)
+        {
+            var port = FreePort();
+            var broker = factory.CreateMqttServer(factory.CreateServerOptionsBuilder()
+                .WithDefaultEndpoint()
+                .WithDefaultEndpointBoundIPAddress(IPAddress.Loopback)
+                .WithDefaultEndpointPort(port)
+                .Build());
+
+            try
+            {
+                await broker.StartAsync();
+                _port = port;
+                _broker = broker;
+                return;
+            }
+            catch (Exception) when (attempt < 4)
+            {
+                // Something else took the port between the probe and this bind. Take another.
+                broker.Dispose();
+            }
+        }
     }
 
     public async Task DisposeAsync()
